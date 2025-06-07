@@ -13,7 +13,7 @@ const cookieOptions = {
 
 const connectDB = (uri) => {
   mongoose
-    .connect(uri, { dbName: "Chattu" })
+    .connect(uri, { dbName: "vite-chat-app" })
     .then((data) => console.log(`Connected to DB: ${data.connection.host}`))
     .catch((err) => {
       throw err;
@@ -38,18 +38,23 @@ const emitEvent = (req, event, users, data) => {
 
 const uploadFilesToCloudinary = async (files = []) => {
   const uploadPromises = files.map((file) => {
-    return new Promise((resolve, reject) => {
-      cloudinary.uploader.upload(
-        getBase64(file),
-        {
-          resource_type: "auto",
-          public_id: uuid(),
-        },
-        (error, result) => {
-          if (error) return reject(error);
-          resolve(result);
-        }
-      );
+    return new Promise(async (resolve, reject) => {
+      try {
+        const base64 = await getBase64(file);
+        cloudinary.uploader.upload(
+          base64,
+          {
+            resource_type: "auto",
+            public_id: uuid(),
+          },
+          (error, result) => {
+            if (error) return reject(error);
+            resolve(result);
+          }
+        );
+      } catch (err) {
+        reject(err);
+      }
     });
   });
 
@@ -60,9 +65,11 @@ const uploadFilesToCloudinary = async (files = []) => {
       public_id: result.public_id,
       url: result.secure_url,
     }));
+
     return formattedResults;
   } catch (err) {
-    throw new Error("Error uploading files to cloudinary", err);
+    console.error("Cloudinary Upload Error:", err);
+    throw new Error(`Error uploading files to Cloudinary: ${err.message}`);
   }
 };
 
