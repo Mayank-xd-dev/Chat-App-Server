@@ -10,4 +10,8 @@ const corsOptions = {
 
 const CHATTU_TOKEN = "chattu-token";
 
+<<<<<<< HEAD
 export { corsOptions, CHATTU_TOKEN };
+=======
+export { corsOptions, CHATTU_TOKEN };
+>>>>>>> 26db2284c271f7a37344cc555d7c03d2d46e9030
