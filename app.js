@@ -7,6 +7,8 @@ import { Server } from "socket.io";
 import { createServer } from "http";
 import { v4 as uuid } from "uuid";
 import cors from "cors";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
 import { v2 as cloudinary } from "cloudinary";
 import {
   CHAT_JOINED,
@@ -32,13 +34,22 @@ dotenv.config({
 
 const mongoURI = process.env.MONGO_URI;
 const port = process.env.PORT || 3000;
-const envMode = process.env.NODE_ENV.trim() || "PRODUCTION";
+const envMode = process.env.NODE_ENV?.trim() || "PRODUCTION";
 const adminSecretKey = process.env.ADMIN_SECRET_KEY || "MAYANK";
 const userSocketIDs = new Map();
 const onlineUsers = new Set();
 
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per windowMs
+  message: "Too many requests from this IP, please try again later.",
+});
+
+// Connect to MongoDB
 connectDB(mongoURI);
 
+// Configure Cloudinary
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
@@ -49,23 +60,36 @@ const app = express();
 const server = createServer(app);
 const io = new Server(server, {
   cors: corsOptions,
+  pingTimeout: 60000,
+  pingInterval: 25000,
 });
 
 app.set("io", io);
 
-// Using Middlewares Here
-app.use(express.json());
+// Security Middlewares
+app.use(helmet());
+app.use(limiter);
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 app.use(cookieParser());
 app.use(cors(corsOptions));
 
+// Health check endpoint
+app.get("/health", (req, res) => {
+  res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
+// API Routes
 app.use("/api/v1/user", userRoute);
 app.use("/api/v1/chat", chatRoute);
 app.use("/api/v1/admin", adminRoute);
 
+// Root endpoint
 app.get("/", (req, res) => {
-  res.send("Hello World");
+  res.send("Server is running");
 });
 
+// Socket.io middleware
 io.use((socket, next) => {
   cookieParser()(
     socket.request,
@@ -74,6 +98,7 @@ io.use((socket, next) => {
   );
 });
 
+// Socket.io connection handling
 io.on("connection", (socket) => {
   const user = socket.user;
   userSocketIDs.set(user._id.toString(), socket.id);
@@ -106,7 +131,8 @@ io.on("connection", (socket) => {
     try {
       await Message.create(messageForDB);
     } catch (error) {
-      throw new Error(error);
+      console.error("Message creation error:", error);
+      socket.emit("error", { message: "Failed to save message" });
     }
   });
 
@@ -122,14 +148,12 @@ io.on("connection", (socket) => {
 
   socket.on(CHAT_JOINED, ({ userId, members }) => {
     onlineUsers.add(userId.toString());
-
     const membersSocket = getSockets(members);
     io.to(membersSocket).emit(ONLINE_USERS, Array.from(onlineUsers));
   });
 
   socket.on(CHAT_LEAVED, ({ userId, members }) => {
     onlineUsers.delete(userId.toString());
-
     const membersSocket = getSockets(members);
     io.to(membersSocket).emit(ONLINE_USERS, Array.from(onlineUsers));
   });
@@ -139,12 +163,32 @@ io.on("connection", (socket) => {
     onlineUsers.delete(user._id.toString());
     socket.broadcast.emit(ONLINE_USERS, Array.from(onlineUsers));
   });
+
+  // Error handling for socket events
+  socket.on("error", (error) => {
+    console.error("Socket error:", error);
+    socket.emit("error", { message: "An error occurred" });
+  });
 });
 
+// Error handling middleware
 app.use(errorMiddleware);
 
+// Start server
 server.listen(port, () => {
   console.log(`Server is running on port ${port} in ${envMode} Mode`);
+});
+
+// Handle uncaught exceptions
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught Exception:", err);
+  process.exit(1);
+});
+
+// Handle unhandled promise rejections
+process.on("unhandledRejection", (err) => {
+  console.error("Unhandled Rejection:", err);
+  process.exit(1);
 });
 
 export { envMode, adminSecretKey, userSocketIDs };
